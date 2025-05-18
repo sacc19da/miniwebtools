@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8">
+  <title>PDF 合併工具</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+  <style>
+    /* 全域樣式 */
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      /* 設定視窗高度 */
+      box-sizing: border-box;
+    }
+
+    h1 {
+      margin: 10px 0 5px;
+      /* 調整標題和內容距離 */
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      justify-content: space-between;
+      width: 90%;
+    }
+
+    .container {
+      display: flex;
+      flex-grow: 1;
+      /* 撐滿剩餘空間 */
+      width: 100%;
+      margin: 0;
+      padding: 0;
+    }
+
+    .panel {
+      flex: 1;
+      /* 平分空間 */
+      border: 1px solid #ccc;
+      margin: 0;
+      /* 移除外距 */
+      padding: 0;
+      /* 移除內距 */
+      overflow-y: auto;
+      /* 啟用垂直滾動條 */
+      height: calc(100vh - 120px);
+      /* 計算固定高度，減去 toolbar 與標題的空間 */
+      position: relative;
+    }
+
+    .panel h3 {
+      text-align: center;
+      margin: 5px 0;
+      position: sticky;
+      top: 0;
+      background: #fff;
+      z-index: 1;
+      border-bottom: 1px solid #ccc;
+      /* 增加標題底部邊框 */
+    }
+
+    .pdf-page-container {
+      margin: 5px;
+      border: 1px solid #999;
+      padding: 5px;
+      position: relative;
+      text-align: center;
+      cursor: grab;
+    }
+
+    .pdf-page-container.dragged {
+      opacity: 0.5;
+    }
+
+    .pdf-page {
+      display: block;
+      max-width: 100%;
+    }
+
+    .page-info {
+      margin-top: 5px;
+      font-size: 12px;
+    }
+
+    .checkbox {
+      position: absolute;
+      top: 5px;
+      left: 5px;
+      transform: scale(1.5);
+      /* 放大勾選框 */
+    }
+
+    .remove-button {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: red;
+      color: white;
+      border: none;
+      cursor: pointer;
+      padding: 2px 5px;
+      font-size: 12px;
+    }
+
+    #zoom-control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* 頁數計數樣式 */
+    h3 span {
+      font-size: 14px;
+      color: #555;
+      margin-left: 10px;
+    }
+
+    /* 批次勾選區塊 */
+    .batch-select {
+      display: flex;
+      align-items: center;
+      justify-content: start;
+      gap: 10px;
+      margin: 10px 0;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 10px;
+    }
+
+    /* PDF 預覽區塊 */
+    .pdf-preview {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>PDF 合併工具</h1>
+  <div class="toolbar">
+    <label>檔案 1：<input type="file" id="file1" accept="application/pdf"></label>
+    <label>檔案 2：<input type="file" id="file2" accept="application/pdf"></label>
+    <div id="zoom-control">
+      <label for="zoom">縮放大小：</label>
+      <select id="zoom">
+        <option value="0.5">50%</option>
+        <option value="0.75" selected>75%</option>
+        <option value="1">100%</option>
+        <option value="1.5">150%</option>
+        <option value="2">200%</option>
+      </select>
+    </div>
+    <button id="merge-button">合併 PDF</button>
+  </div>
+
+  <div class="container">
+    <div id="left-panel" class="panel">
+      <h3>檔案 1 頁面 <span id="left-page-count">(共 0 頁)</span></h3>
+      <div class="batch-select">
+        <label>批次勾選：</label>
+        <input type="number" id="left-start-page" placeholder="起始頁" min="1">
+        <input type="number" id="left-end-page" placeholder="結束頁" min="1">
+        <button id="left-batch-select">勾選</button>
+      </div>
+      <div class="pdf-preview" id="left-pdf-preview">
+        <!-- PDF 頁面會動態加載到這裡 -->
+      </div>
+    </div>
+
+    <div id="middle-panel" class="panel">
+      <h3>檔案 2 頁面 <span id="middle-page-count">(共 0 頁)</span></h3>
+      <div class="batch-select">
+        <label>批次勾選：</label>
+        <input type="number" id="middle-start-page" placeholder="起始頁" min="1">
+        <input type="number" id="middle-end-page" placeholder="結束頁" min="1">
+        <button id="middle-batch-select">勾選</button>
+      </div>
+      <div class="pdf-preview" id="middle-pdf-preview">
+        <!-- PDF 頁面會動態加載到這裡 -->
+      </div>
+    </div>
+
+    <div id="right-panel" class="panel">
+      <h3>合併後結果 <span id="right-page-count">(共 0 頁)</span></h3>
+      <div class="pdf-preview" id="right-pdf-preview">
+        <!-- 合併結果會動態加載到這裡 -->
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const leftPanel = document.getElementById('left-panel');
+    const middlePanel = document.getElementById('middle-panel');
+    const rightPanel = document.getElementById('right-panel');
+    const leftPageCount = document.getElementById('left-page-count');
+    const middlePageCount = document.getElementById('middle-page-count');
+    const file1Input = document.getElementById('file1');
+    const file2Input = document.getElementById('file2');
+    const leftBatchSelect = document.getElementById('left-batch-select');
+    const middleBatchSelect = document.getElementById('middle-batch-select');
+    const leftStartPage = document.getElementById('left-start-page');
+    const leftEndPage = document.getElementById('left-end-page');
+    const middleStartPage = document.getElementById('middle-start-page');
+    const middleEndPage = document.getElementById('middle-end-page');
+    const mergeButton = document.getElementById('merge-button');
+    const zoomSelect = document.getElementById('zoom');
+    let originalFiles = [null, null];
+    let mergedPages = [];
+    let scale = parseFloat(zoomSelect.value);
+
+    async function loadPdf(file, panel, fileIndex, pageCountElement) {
+      const arrayBuffer = await file.arrayBuffer();
+      const typedArray = new Uint8Array(arrayBuffer);
+      const pdfDoc = await pdfjsLib.getDocument({ data: typedArray }).promise;
+      originalFiles[fileIndex] = typedArray;
+
+      pageCountElement.textContent = `共 ${pdfDoc.numPages} 頁`;
+      renderPdfToPanel(pdfDoc, panel, fileIndex);
+    }
+
+    function renderPdfToPanel(pdfDoc, panel, fileIndex) {
+      // 獲取 PDF 預覽區塊
+      const pdfPreview = panel.querySelector('.pdf-preview');
+      pdfPreview.innerHTML = ''; // 清空之前的預覽內容
+
+      // 更新頁數顯示
+      const pageCount = panel.querySelector(`#${fileIndex === 0 ? 'left' : 'middle'}-page-count`);
+      pageCount.textContent = `(共 ${pdfDoc.numPages} 頁)`;
+
+      // 渲染每一頁
+      for (let i = 1; i <= pdfDoc.numPages; i++) {
+        pdfDoc.getPage(i).then(page => {
+          const canvas = document.createElement('canvas');
+          const viewport = page.getViewport({ scale });
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const context = canvas.getContext('2d');
+
+          // 渲染 PDF 頁面到 Canvas
+          page.render({ canvasContext: context, viewport: viewport }).promise.then(() => {
+            const container = document.createElement('div');
+            container.classList.add('pdf-page-container');
+            container.draggable = true; // 啟用拖拉功能
+
+            // 增加勾選框
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'checkbox';
+            container.appendChild(checkbox);
+
+            // 顯示頁面資訊
+            const pageInfo = document.createElement('div');
+            pageInfo.className = 'page-info';
+            pageInfo.textContent = `檔案${fileIndex + 1}：原本第 ${i} 頁`;
+            container.appendChild(pageInfo);
+
+            // 添加 Canvas 到頁面容器
+            container.appendChild(canvas);
+
+            // 添加容器到 PDF 預覽區塊
+            pdfPreview.appendChild(container);
+
+            // 勾選事件處理
+            checkbox.addEventListener('change', () => {
+              if (checkbox.checked) {
+                addToMergedPages({ fileIndex, pageIndex: i - 1, pdfDoc });
+              } else {
+                removeFromMergedPages({ fileIndex, pageIndex: i - 1 });
+              }
+            });
+
+            // 拖拉事件處理
+            container.addEventListener('dragstart', e => {
+              e.dataTransfer.setData('text/plain', JSON.stringify({ fileIndex, pageIndex: i - 1 }));
+              container.classList.add('dragged');
+            });
+
+            container.addEventListener('dragend', () => {
+              container.classList.remove('dragged');
+            });
+          });
+        });
+      }
+    }
+
+    function addToMergedPages(page) {
+      // 添加頁面前檢查是否已存在
+      const isDuplicate = mergedPages.some(
+        (p) => p.fileIndex === page.fileIndex && p.pageIndex === page.pageIndex
+      );
+
+      if (!isDuplicate) {
+        mergedPages.push(page);
+        updateRightPanel();
+      }
+    }
+
+    function removeFromMergedPages(page) {
+      mergedPages = mergedPages.filter(p => !(p.fileIndex === page.fileIndex && p.pageIndex === page.pageIndex));
+      updateRightPanel();
+      updateCheckboxState(page, false);
+    }
+
+    function updateCheckboxState(page, checked) {
+      const panel = page.fileIndex === 0 ? leftPanel : middlePanel;
+      const checkboxes = panel.querySelectorAll('.checkbox');
+      checkboxes[page.pageIndex].checked = checked;
+    }
+
+    async function batchSelect(panel, startPage, endPage, fileIndex) {
+      const start = parseInt(startPage.value, 10) - 1;
+      const end = parseInt(endPage.value, 10) - 1;
+
+      // 確保 PDF 文件已加載
+      const pdfDoc = await pdfjsLib.getDocument({ data: originalFiles[fileIndex] }).promise;
+
+      for (let i = start; i <= end && i < panel.querySelectorAll('.checkbox').length; i++) {
+        const checkbox = panel.querySelectorAll('.checkbox')[i];
+
+        if (!checkbox.checked) {
+          checkbox.checked = true;
+
+          const page = {
+            fileIndex,
+            pageIndex: i,
+            pdfDoc,
+          };
+
+          // 添加到 mergedPages 前檢查是否已存在
+          const isDuplicate = mergedPages.some(
+            (p) => p.fileIndex === page.fileIndex && p.pageIndex === page.pageIndex
+          );
+
+          if (!isDuplicate) {
+            mergedPages.push(page);
+          }
+        }
+      }
+
+      // 更新合併結果面板的顯示
+      updateRightPanel();
+
+      // 滾動到合併結果的底部
+      const rightPanel = document.getElementById('right-pdf-preview');
+      rightPanel.scrollTop = rightPanel.scrollHeight;
+    }
+
+    async function updateRightPanel() {
+      const pdfPreview = document.getElementById('right-pdf-preview');
+      const pageCount = document.getElementById('right-page-count');
+      pdfPreview.innerHTML = ''; // 清空 PDF 預覽區塊
+
+      pageCount.textContent = `(共 ${mergedPages.length} 頁)`; // 更新頁數顯示
+
+      for (const [index, page] of mergedPages.entries()) {
+        const container = document.createElement('div');
+        container.classList.add('pdf-page-container');
+        container.draggable = true;
+
+        const removeButton = document.createElement('button');
+        removeButton.className = 'remove-button';
+        removeButton.textContent = '移除';
+        container.appendChild(removeButton);
+
+        const pageInfo = document.createElement('div');
+        pageInfo.className = 'page-info';
+        pageInfo.textContent = `合併：原本檔案${page.fileIndex + 1}第 ${page.pageIndex + 1} 頁`;
+        container.appendChild(pageInfo);
+
+        const canvas = document.createElement('canvas');
+        const viewport = (await page.pdfDoc.getPage(page.pageIndex + 1)).getViewport({ scale });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const context = canvas.getContext('2d');
+        (await page.pdfDoc.getPage(page.pageIndex + 1)).render({ canvasContext: context, viewport });
+        container.appendChild(canvas);
+
+        pdfPreview.appendChild(container);
+
+        // 移除按鈕事件
+        removeButton.addEventListener('click', () => {
+          // 從 mergedPages 刪除目標頁面
+          mergedPages.splice(index, 1);
+
+          // 更新來源勾選框狀態
+          const sourcePanel = page.fileIndex === 0 ? leftPanel : middlePanel;
+          const checkboxes = sourcePanel.querySelectorAll('.checkbox');
+          if (checkboxes[page.pageIndex]) {
+            checkboxes[page.pageIndex].checked = false;
+          }
+
+          // 更新右側面板顯示
+          updateRightPanel();
+        });
+
+        // 拖曳事件
+        container.addEventListener('dragstart', e => {
+          e.dataTransfer.effectAllowed = 'move';
+        });
+
+        container.addEventListener('dragover', e => {
+          e.preventDefault();
+        });
+
+        container.addEventListener('drop', () => {
+          // 拖曳重新排序
+          const srcIndex = [...pdfPreview.children].indexOf(container);
+          const draggedPage = mergedPages.splice(srcIndex, 1)[0];
+          mergedPages.push(draggedPage);
+          updateRightPanel();
+        });
+      }
+    }
+
+    file1Input.addEventListener('change', event => {
+      const file = event.target.files[0];
+      if (file) {
+        mergedPages = [];
+        updateRightPanel();
+        loadPdf(file, leftPanel, 0, leftPageCount);
+      }
+    });
+
+    file2Input.addEventListener('change', event => {
+      const file = event.target.files[0];
+      if (file) {
+        mergedPages = [];
+        updateRightPanel();
+        loadPdf(file, middlePanel, 1, middlePageCount);
+      }
+    });
+
+    zoomSelect.addEventListener('change', () => {
+      scale = parseFloat(zoomSelect.value);
+      if (originalFiles[0]) loadPdf(new Blob([originalFiles[0]]), leftPanel, 0);
+      if (originalFiles[1]) loadPdf(new Blob([originalFiles[1]]), middlePanel, 1);
+      updateRightPanel();
+    });
+
+    leftBatchSelect.addEventListener('click', () => {
+      batchSelect(leftPanel, leftStartPage, leftEndPage, 0);
+    });
+
+    middleBatchSelect.addEventListener('click', () => {
+      batchSelect(middlePanel, middleStartPage, middleEndPage, 1);
+    });
+
+    mergeButton.addEventListener('click', async () => {
+      // 禁用按鈕以避免重複點擊
+      mergeButton.disabled = true;
+      mergeButton.textContent = '正在合併...';
+
+      try {
+        const pdfDoc = await PDFLib.PDFDocument.create();
+        for (const page of mergedPages) {
+          const originalDoc = await PDFLib.PDFDocument.load(originalFiles[page.fileIndex]);
+          const [copiedPage] = await pdfDoc.copyPages(originalDoc, [page.pageIndex]);
+          pdfDoc.addPage(copiedPage);
+        }
+
+        const mergedBytes = await pdfDoc.save();
+        const blob = new Blob([mergedBytes], { type: 'application/pdf' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'merged.pdf';
+        link.click();
+
+        // 當檔案完成下載後重新啟用按鈕
+        mergeButton.textContent = '合併 PDF';
+        mergeButton.disabled = false;
+      } catch (error) {
+        console.error('合併 PDF 發生錯誤:', error);
+        mergeButton.textContent = '合併 PDF';
+        mergeButton.disabled = false;
+      }
+    });
+  </script>
+
+</body>
+
+</html>

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to Image Converter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+    <style>
+        .btnDownloadImage {
+            margin-right: 10px;
+            /* 按钮之间的间距 */
+        }
+
+        .btnContainer {
+            display: flex;
+            flex-wrap: wrap;
+            margin-top: 50px;
+            /* 用于将按钮下移一些，避免覆盖在预览图上 */
+        }
+
+        #dropArea {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            margin-top: 20px;
+            cursor: pointer;
+        }
+
+        #dropArea.highlight {
+            border-color: #007bff;
+            background-color: #f0faff;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="dropArea" ondrop="handleDrop(event)" ondragover="handleDragOver(event)"
+        ondragenter="handleDragEnter(event)" ondragleave="handleDragLeave(event)">
+        <p>Drag and drop PDF files here, or click to select files.</p>
+    </div>
+    <input type="file" id="pdfInput">
+    <button onclick="convertToImages()">Convert to Images</button>
+    <div id="output"></div>
+
+    <script>
+        document.getElementById('dropArea').addEventListener('click', function () {
+            document.getElementById('pdfInput').click(); // 触发文件选择器的点击事件
+        });
+
+        function handleDrop(event) {
+            event.preventDefault();
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                document.getElementById('pdfInput').files = files;
+                convertToImages();
+            }
+            document.getElementById('dropArea').classList.remove('highlight');
+        }
+
+        function handleDragOver(event) {
+            event.preventDefault();
+        }
+
+        function handleDragEnter(event) {
+            event.preventDefault();
+            document.getElementById('dropArea').classList.add('highlight');
+        }
+
+        function handleDragLeave(event) {
+            event.preventDefault();
+            document.getElementById('dropArea').classList.remove('highlight');
+        }
+
+        document.getElementById('pdfInput').addEventListener('change', function (event) {
+            convertToImages();
+            // const selectedFile = event.target.files[0];
+            // if (selectedFile) {
+            //     outputDiv.textContent = `Selected file: ${selectedFile.name}`;
+            //     // 在这里执行你想要执行的其他操作
+            // } else {
+            //     outputDiv.textContent = 'No file selected';
+            // }
+        });
+
+        async function convertToImages() {
+            const file = document.getElementById('pdfInput').files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = async function (event) {
+                    const arrayBuffer = event.target.result;
+                    const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+                    const numPages = pdf.numPages;
+                    const outputDiv = document.getElementById('output');
+                    outputDiv.innerHTML = '';
+                    const btnContainer = document.createElement('div');
+                    btnContainer.className = 'btnContainer';
+                    const downloadAllBtn = document.createElement('button');
+                    downloadAllBtn.textContent = 'Download All Pages';
+                    downloadAllBtn.className = 'btnDownloadImage';
+                    downloadAllBtn.onclick = function () {
+                        downloadAllImages(pdf, numPages); // Pass pdf and numPages to downloadAllImages
+                    };
+                    btnContainer.appendChild(downloadAllBtn);
+                    document.body.insertBefore(btnContainer, outputDiv);
+                    for (let i = 1; i <= numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const viewport = page.getViewport({ scale: 2.5 });
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        canvas.width = viewport.width;
+                        canvas.height = viewport.height;
+                        await page.render({ canvasContext: context, viewport }).promise;
+                        const imageData = canvas.toDataURL('image/jpeg', 1.0);
+                        const img = document.createElement('img');
+                        img.src = imageData;
+                        outputDiv.appendChild(img);
+                        const downloadBtn = document.createElement('button');
+                        downloadBtn.textContent = `Download Page ${i}`;
+                        downloadBtn.className = 'btnDownloadImage';
+                        downloadBtn.onclick = function () {
+                            downloadImage(imageData, `page_${i}.jpg`);
+                        };
+                        btnContainer.appendChild(downloadBtn);
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        function downloadImage(imageData, fileName) {
+            const a = document.createElement('a');
+            a.href = imageData;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        async function downloadAllImages(pdf, numPages) {
+            const zip = new JSZip();
+            try {
+                for (let i = 1; i <= numPages; i++) {
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 2.5 });
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    await page.render({ canvasContext: context, viewport }).promise;
+                    // 将图像数据转换为 Blob 对象
+                    const imageData = await new Promise((resolve) => {
+                        canvas.toBlob(resolve, 'image/jpeg', 1.0);
+                    });
+                    console.log(`Page ${i} image data:`, imageData); // 添加调试输出
+                    // 将 Blob 对象添加到 ZIP 文件中
+                    zip.file(`page_${i}.jpg`, imageData, { binary: true });
+                }
+                // 生成 ZIP 文件并下载
+                const content = await zip.generateAsync({ type: 'blob' });
+                console.log('Generated ZIP content:', content); // 添加调试输出
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(content);
+                a.download = 'converted_images.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            } catch (error) {
+                console.error('生成 ZIP 文件时出错:', error);
+            }
+        }
+
+    </script>
+</body>
+
+</html>

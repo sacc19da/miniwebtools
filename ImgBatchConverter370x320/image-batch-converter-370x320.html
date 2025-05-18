@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>圖片批次轉換尺寸370x320與排序工具</title>
+  <style>
+    body { font-family: sans-serif; padding: 2em; background: #f5f5f5; }
+    #output { display: flex; flex-wrap: wrap; gap: 10px; }
+    .preview-wrapper { position: relative; display: inline-block; text-align: center; background: #fff; border: 1px solid #ccc; padding: 5px; cursor: move; }
+    .preview-wrapper img { max-width: 180px; display: block; }
+    .preview-wrapper span { display: block; margin-top: 4px; font-size: 12px; }
+    .preview-wrapper .order { font-weight: bold; margin-bottom: 4px; }
+    #controls { margin-top: 20px; }
+    body.dragover { background: #d0f0c0; } /* 拖曳時的背景色 */
+    .preview-wrapper .delete-btn {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: red;
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      font-size: 18px;
+      line-height: 18px;
+      text-align: center;
+      cursor: pointer;
+    }
+    #blocks { margin-top: 20px; }
+    .block { margin-bottom: 20px; border: 1px solid #ccc; padding: 10px; background: #fff; }
+    .block h2 { margin: 0 0 10px; font-size: 16px; }
+    .block-output { display: flex; flex-wrap: wrap; gap: 10px; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+</head>
+<body>
+  <h1>圖片批次轉換尺寸370x320與排序工具</h1>
+  <input type="file" id="fileInput" multiple accept="image/*"><br><br>
+  <button id="clearAll">清空全部圖片</button>
+  <button id="sortByName">依檔案名稱排序</button>
+  <div id="controls">
+    <button id="autoDistribute">自動分布</button>
+    <button id="downloadZip">下載 ZIP</button>
+  </div>
+  <div>
+    <label><input type="radio" name="nameMode" value="original" checked> 使用原始檔名</label>
+    <label><input type="radio" name="nameMode" value="numbered"> 使用排序編號（01, 02...）</label>
+  </div>
+  <div>
+    <label for="blockSize">選擇每個區塊的圖片數量：</label>
+    <select id="blockSize">
+      <option value="8">8 張</option>
+      <option value="16">16 張</option>
+      <option value="24">24 張</option>
+      <option value="32">32 張</option>
+      <option value="40">40 張</option>
+    </select>
+  </div>
+  <div id="output" class="dropzone">待選區</div> <!-- 待選區 -->
+  <div id="blocks"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <script>
+    const MAX_WIDTH = 370;
+    const MAX_HEIGHT = 320;
+    const output = document.getElementById('output');
+    const blocksContainer = document.getElementById('blocks');
+    const imageList = new Map(); // 使用 Map 儲存圖片，避免重複
+    const blocks = []; // 儲存區塊資訊
+
+    /**
+     * @summary 建立新的區塊
+     * @param {number} size 區塊的圖片數量
+     */
+    function createBlock(size) {
+      const block = document.createElement('div');
+      block.className = 'block dropzone'; // 區塊支援拖曳
+      block.dataset.size = size;
+      block.innerHTML = `
+        <h2>區塊 ${String(blocks.length + 1).padStart(2, '0')}</h2>
+        <select class="block-size-selector">
+          <option value="8" ${size === 8 ? 'selected' : ''}>8 張</option>
+          <option value="16" ${size === 16 ? 'selected' : ''}>16 張</option>
+          <option value="24" ${size === 24 ? 'selected' : ''}>24 張</option>
+          <option value="32" ${size === 32 ? 'selected' : ''}>32 張</option>
+          <option value="40" ${size === 40 ? 'selected' : ''}>40 張</option>
+        </select>
+        <div class="block-output"></div>
+      `;
+      blocksContainer.appendChild(block);
+      blocks.push(block);
+
+      // 監聽區塊內的下拉選單變更事件
+      block.querySelector('.block-size-selector').addEventListener('change', () => {
+        adjustBlockSize(block);
+      });
+
+      // 啟用拖曳排序功能
+      new Sortable(block.querySelector('.block-output'), {
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        group: 'shared', // 支援跨區塊拖曳
+        onAdd: (evt) => {
+          const targetBlock = evt.to.closest('.block');
+          const blockSize = parseInt(targetBlock.querySelector('.block-size-selector').value, 10);
+          const blockOutput = targetBlock.querySelector('.block-output');
+
+          // 如果目標區塊已達到上限，將圖片移動到待選區
+          if (blockOutput.children.length > blockSize) {
+            const excessImage = blockOutput.lastElementChild;
+            output.appendChild(excessImage);
+            updateOrder();
+          }
+        },
+        onEnd: () => {
+          updateOrder();
+          updateBlockOrder();
+        },
+      });
+    }
+
+    /**
+     * @summary 調整區塊的圖片數量，將多餘的圖片移動到待選區
+     * @param {HTMLElement} block 要調整的區塊
+     */
+    function adjustBlockSize(block) {
+      const blockOutput = block.querySelector('.block-output');
+      const blockSize = parseInt(block.querySelector('.block-size-selector').value, 10);
+
+      // 將多餘的圖片移動到待選區
+      while (blockOutput.children.length > blockSize) {
+        const excessImage = blockOutput.lastElementChild;
+        output.appendChild(excessImage);
+      }
+
+      updateOrder();
+      updateBlockOrder();
+    }
+
+    /**
+     * @summary 將待選區的圖片分布到各區塊
+     */
+    function redistributeImages() {
+      const allImages = [...output.querySelectorAll('.preview-wrapper')];
+      blocks.forEach((block) => {
+        const blockOutput = block.querySelector('.block-output');
+        const blockSize = parseInt(block.querySelector('.block-size-selector').value, 10);
+        while (blockOutput.children.length < blockSize && allImages.length > 0) {
+          blockOutput.appendChild(allImages.shift());
+        }
+      });
+
+      // 如果還有剩餘圖片，創建新區塊
+      while (allImages.length > 0) {
+        const blockSize = parseInt(document.getElementById('blockSize').value, 10);
+        createBlock(blockSize);
+        const newBlock = blocks[blocks.length - 1];
+        const blockOutput = newBlock.querySelector('.block-output');
+        while (blockOutput.children.length < blockSize && allImages.length > 0) {
+          blockOutput.appendChild(allImages.shift());
+        }
+      }
+
+      updateBlockOrder();
+    }
+
+    /**
+     * @summary 處理上傳的圖片檔案
+     * @param {FileList} files 上傳的檔案列表
+     */
+    async function handleFiles(files) {
+      for (const file of files) {
+        const filePath = file.name;
+        if (imageList.has(filePath)) {
+          alert(`檔案 ${filePath} 已經存在！`);
+          continue;
+        }
+
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        await img.decode();
+
+        const scale = Math.min(MAX_WIDTH / img.width, MAX_HEIGHT / img.height);
+        const newW = img.width * scale;
+        const newH = img.height * scale;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = MAX_WIDTH;
+        canvas.height = MAX_HEIGHT;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, MAX_WIDTH, MAX_HEIGHT);
+        ctx.drawImage(img, (MAX_WIDTH - newW) / 2, (MAX_HEIGHT - newH) / 2, newW, newH);
+
+        const dataURL = canvas.toDataURL('image/png');
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'preview-wrapper';
+        wrapper.innerHTML = `
+          <button class="delete-btn">x</button>
+          <div class="order">${imageList.size + 1}</div>
+          <img src="${dataURL}">
+          <span>${filePath}</span>
+        `;
+        output.appendChild(wrapper);
+
+        // 新增刪除按鈕的事件
+        wrapper.querySelector('.delete-btn').addEventListener('click', () => {
+          imageList.delete(filePath);
+          wrapper.remove();
+          updateOrder();
+        });
+
+        imageList.set(filePath, { name: file.name, dataURL: dataURL, element: wrapper });
+      }
+    }
+
+    /**
+     * @summary 更新待選區圖片的排序編號
+     */
+    function updateOrder() {
+      [...output.children].forEach((child, index) => {
+        child.querySelector('.order').textContent = index + 1;
+      });
+    }
+
+    /**
+     * @summary 更新每個區塊內圖片的排序編號
+     */
+    function updateBlockOrder() {
+      blocks.forEach((block) => {
+        const blockOutput = block.querySelector('.block-output');
+        [...blockOutput.children].forEach((child, index) => {
+          child.querySelector('.order').textContent = String(index + 1).padStart(2, '0');
+        });
+      });
+    }
+
+    /**
+     * @summary 將待選區的圖片依檔案名稱排序
+     */
+    function sortByName() {
+      const sortedImages = [...output.querySelectorAll('.preview-wrapper')].sort((a, b) => {
+        const nameA = a.querySelector('span').textContent.toLowerCase();
+        const nameB = b.querySelector('span').textContent.toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+
+      output.innerHTML = '';
+      sortedImages.forEach((image) => output.appendChild(image));
+      updateOrder();
+    }
+
+    // 處理檔案選擇
+    document.getElementById('fileInput').addEventListener('change', function (event) {
+      handleFiles([...event.target.files]);
+    });
+
+    // 啟用拖曳排序功能
+    new Sortable(output, {
+      animation: 150,
+      ghostClass: 'sortable-ghost',
+      group: 'shared', // 支援跨區塊拖曳
+      onEnd: () => {
+        updateOrder();
+      },
+    });
+
+    // 清空全部圖片
+    document.getElementById('clearAll').addEventListener('click', () => {
+      output.innerHTML = '';
+      blocksContainer.innerHTML = '';
+      imageList.clear();
+      blocks.length = 0;
+    });
+
+    // 自動分布按鈕
+    document.getElementById('autoDistribute').addEventListener('click', redistributeImages);
+
+    // 排序按鈕
+    document.getElementById('sortByName').addEventListener('click', sortByName);
+
+    // 下載 ZIP
+    document.getElementById('downloadZip').addEventListener('click', () => {
+      const nameMode = document.querySelector('input[name="nameMode"]:checked').value;
+
+      blocks.forEach((block, blockIndex) => {
+        const zip = new JSZip();
+        const images = [...block.querySelectorAll('.preview-wrapper')];
+
+        images.forEach((wrapper, index) => {
+          const img = wrapper.querySelector('img');
+          const filePath = wrapper.querySelector('span').textContent;
+          const base64 = img.src.split(',')[1];
+          const filename = nameMode === 'original'
+            ? filePath.replace(/\.[^.]+$/, '') + '_370x320.png'
+            : `${(index + 1).toString().padStart(2, '0')}.png`;
+
+          zip.file(filename, base64, { base64: true });
+        });
+
+        zip.generateAsync({ type: 'blob' }).then((blob) => {
+          saveAs(blob, `block_${(blockIndex + 1).toString().padStart(2, '0')}.zip`);
+        });
+      });
+    });
+
+    // 支援拖曳新增檔案
+    document.body.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      document.body.classList.add('dragover'); // 加入背景色變化
+    });
+
+    document.body.addEventListener('dragleave', () => {
+      document.body.classList.remove('dragover'); // 移除背景色變化
+    });
+
+    document.body.addEventListener('drop', (event) => {
+      event.preventDefault();
+      document.body.classList.remove('dragover'); // 移除背景色變化
+      const files = [...event.dataTransfer.files];
+      handleFiles(files);
+    });
+  </script>
+</body>
+</html>

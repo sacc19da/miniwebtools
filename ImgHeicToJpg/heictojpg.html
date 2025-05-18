@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HEIC to JPG Batch Converter</title>
+    <style>
+        #preview {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .thumbnail {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            cursor: pointer;
+        }
+        .full-image-container {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(0, 0, 0, 0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .full-image-container img {
+            max-width: 90%;
+            max-height: 90%;
+        }
+        .full-image-container .close-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 24px;
+            color: white;
+            cursor: pointer;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #downloadAll {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>HEIC to JPG Batch Converter</h1>
+    <input type="file" id="fileInput" accept=".heic" multiple />
+    <button id="uploadBtn">上傳並轉換</button>
+    <div id="preview"></div>
+    <button id="downloadAll" style="display:none;">批次下載 JPG (ZIP)</button>
+
+    <div id="fullImageContainer" class="full-image-container">
+        <span class="close-btn" id="closeFullImage">X</span>
+        <img id="fullImage" />
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/heic2any"></script>
+    <script src="https://stuk.github.io/jszip/dist/jszip.min.js"></script>
+    <script src="https://stuk.github.io/jszip-utils/dist/jszip-utils.min.js"></script>
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const previewDiv = document.getElementById('preview');
+        const fullImageContainer = document.getElementById('fullImageContainer');
+        const fullImage = document.getElementById('fullImage');
+        const closeFullImage = document.getElementById('closeFullImage');
+        const downloadButton = document.getElementById('downloadAll');
+        let convertedFiles = [];
+        let zip = new JSZip();
+
+        uploadBtn.addEventListener('click', () => {
+            const files = fileInput.files;
+            previewDiv.innerHTML = ''; // 清除之前的預覽
+            convertedFiles = []; // 重置已轉換的文件列表
+
+            if (files.length > 0) {
+                Array.from(files).forEach(file => {
+                    // 顯示動態圖示
+                    const loader = document.createElement('div');
+                    loader.classList.add('loader');
+                    previewDiv.appendChild(loader);
+
+                    // 立即轉換顯示每張圖片
+                    heic2any({
+                        blob: file,
+                        toType: "image/jpeg"
+                    }).then(result => {
+                        // 壓縮成縮圖顯示
+                        const img = document.createElement('img');
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            img.src = e.target.result;
+                            img.classList.add('thumbnail');
+                            img.addEventListener('click', () => {
+                                fullImage.src = URL.createObjectURL(result);
+                                fullImageContainer.style.display = 'flex';
+                            });
+
+                            const imgContainer = document.createElement('div');
+                            imgContainer.appendChild(img);
+
+                            // 添加下載按鈕
+                            const downloadBtn = document.createElement('button');
+                            downloadBtn.innerText = '下載 JPG';
+                            downloadBtn.addEventListener('click', () => {
+                                const link = document.createElement('a');
+                                link.href = URL.createObjectURL(result);
+                                link.download = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
+                                link.click();
+                            });
+
+                            imgContainer.appendChild(downloadBtn);
+                            previewDiv.appendChild(imgContainer);
+
+                            // 移除動態圖示
+                            loader.remove();
+                        };
+                        reader.readAsDataURL(result);
+
+                        // 保存轉換後的 blob，並將其加入 zip 文件
+                        const fileName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
+                        zip.file(fileName, result);
+                        convertedFiles.push({ name: fileName, blob: result });
+
+                        // 顯示批次下載按鈕
+                        if (convertedFiles.length === files.length) {
+                            downloadButton.style.display = 'block';
+                            alert('所有圖片已轉換完成！');
+                        }
+                    }).catch(error => {
+                        console.error('轉換錯誤：', error);
+                    });
+                });
+            }
+        });
+
+        closeFullImage.addEventListener('click', () => {
+            fullImageContainer.style.display = 'none';
+        });
+
+        downloadButton.addEventListener('click', () => {
+            zip.generateAsync({ type: 'blob' }).then(content => {
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(content);
+                link.download = 'converted_images.zip';
+                link.click();
+            });
+        });
+    </script>
+</body>
+</html>

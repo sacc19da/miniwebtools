@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF 预览和重新排序</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <style>
+        #pdf-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .pdf-page-container {
+            margin: 5px;
+            border: 2px solid #ccc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 5px;
+            box-sizing: border-box;
+        }
+        .pdf-page {
+            cursor: grab;
+            user-select: none;
+        }
+        .page-info {
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<h1>PDF 预览和重新排序</h1>
+<div class="toolbar">
+    <div>
+        <input type="file" id="upload-pdf" accept="application/pdf">
+        <label for="pages-per-row">每行顯示頁數：</label>
+        <select id="pages-per-row">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+        </select>
+    </div>
+    <button id="download-pdf">生成新的 PDF</button>
+</div>
+<div id="pdf-container"></div>
+
+<script>
+    const pdfContainer = document.getElementById('pdf-container');
+    const uploadPdf = document.getElementById('upload-pdf');
+    const downloadPdf = document.getElementById('download-pdf');
+    const pagesPerRowSelect = document.getElementById('pages-per-row');
+    let pdfDoc = null;
+    let pdfPages = [];
+    let originalPdfBytes = null;
+
+    uploadPdf.addEventListener('change', async (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            const fileReader = new FileReader();
+            fileReader.onload = async function(e) {
+                originalPdfBytes = e.target.result;
+                const typedArray = new Uint8Array(originalPdfBytes);
+                pdfDoc = await pdfjsLib.getDocument({data: typedArray}).promise;
+                renderPdfPages();
+            };
+            fileReader.readAsArrayBuffer(file);
+        }
+    });
+
+    pagesPerRowSelect.addEventListener('change', () => {
+        renderPdfPages();
+    });
+
+    function renderPdfPages() {
+        pdfContainer.innerHTML = '';
+        pdfPages = [];
+        const pagesPerRow = parseInt(pagesPerRowSelect.value, 10);
+
+        for (let i = 1; i <= pdfDoc.numPages; i++) {
+            pdfDoc.getPage(i).then(page => {
+                const viewport = page.getViewport({scale: calculateScale(pagesPerRow)});
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                canvas.classList.add('pdf-page');
+                canvas.dataset.originalPageIndex = i - 1;
+                const context = canvas.getContext('2d');
+                page.render({canvasContext: context, viewport: viewport}).promise.then(() => {
+                    const pageContainer = document.createElement('div');
+                    pageContainer.classList.add('pdf-page-container');
+                    pageContainer.style.flex = `0 0 calc(${100 / pagesPerRow}% - 10px)`;
+
+                    const pageInfo = document.createElement('div');
+                    pageInfo.classList.add('page-info');
+                    pageInfo.dataset.originalPageIndex = i - 1;
+                    pageInfo.innerText = `原本第 ${i} 頁 現在第 ${i} 頁`;
+
+                    pageContainer.appendChild(pageInfo);
+                    pageContainer.appendChild(canvas);
+                    pdfContainer.appendChild(pageContainer);
+                    pdfPages.push({page, canvas, pageInfo});
+                    makeDraggable(pageContainer);
+                });
+            });
+        }
+    }
+
+    function calculateScale(pagesPerRow) {
+        const pageWidth = (pdfContainer.clientWidth / pagesPerRow) - 20; // Subtract some padding
+        const viewport = { width: 1000, height: 1000 }; // Placeholder for default viewport
+        return pageWidth / viewport.width;
+    }
+
+    function makeDraggable(element) {
+        element.draggable = true;
+        element.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', e.target.querySelector('.pdf-page').dataset.originalPageIndex);
+            const placeholder = document.createElement('div');
+            placeholder.className = 'draggable-placeholder';
+            e.dataTransfer.setDragImage(placeholder, 0, 0);
+        });
+        element.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const rect = e.target.getBoundingClientRect();
+            const offset = e.clientY - rect.top;
+            const midpoint = rect.height / 2;
+            if (offset < midpoint) {
+                e.target.style.borderTop = '2px solid blue';
+                e.target.style.borderBottom = '';
+            } else {
+                e.target.style.borderTop = '';
+                e.target.style.borderBottom = '2px solid blue';
+            }
+        });
+        element.addEventListener('dragleave', (e) => {
+            e.target.style.borderTop = '';
+            e.target.style.borderBottom = '';
+        });
+        element.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const sourceIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            const sourceElement = pdfContainer.querySelector(`[data-original-page-index="${sourceIndex}"]`).parentNode;
+            const targetIndex = Array.from(pdfContainer.children).indexOf(e.target.parentNode);
+            if (targetIndex !== -1) {
+                if (e.target.style.borderTop) {
+                    pdfContainer.insertBefore(sourceElement, pdfContainer.children[targetIndex]);
+                } else {
+                    pdfContainer.insertBefore(sourceElement, pdfContainer.children[targetIndex].nextSibling);
+                }
+                updatePageIndices();
+            }
+            e.target.style.borderTop = '';
+            e.target.style.borderBottom = '';
+        });
+    }
+
+    function updatePageIndices() {
+        Array.from(pdfContainer.children).forEach((child, index) => {
+            const pageInfo = child.querySelector('.page-info');
+            pageInfo.innerText = `原本第 ${parseInt(pageInfo.dataset.originalPageIndex, 10) + 1} 頁 現在第 ${index + 1} 頁`;
+        });
+    }
+
+    downloadPdf.addEventListener('click', async () => {
+        const pdfBytes = await generateNewPdf();
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'reordered.pdf';
+        link.click();
+    });
+
+    async function generateNewPdf() {
+        const newPdfDoc = await PDFLib.PDFDocument.create();
+        const originalDoc = await PDFLib.PDFDocument.load(originalPdfBytes);
+
+        const pages = pdfContainer.querySelectorAll('.pdf-page');
+        for (const pageCanvas of pages) {
+            const originalPageIndex = parseInt(pageCanvas.dataset.originalPageIndex, 10);
+            const [originalPage] = await newPdfDoc.copyPages(originalDoc, [originalPageIndex]);
+            newPdfDoc.addPage(originalPage);
+        }
+        return newPdfDoc.save();
+    }
+</script>
+
+</body>
+</html>
